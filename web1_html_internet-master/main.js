@@ -2,35 +2,9 @@ const http = require('http');
 const fs = require('fs'); //File System
 const url = require('url');
 const qs = require('querystring');
-
-function templateHTML(title, list, body, control) {
-    return `
-        <!doctype html>
-        <html>
-        <head>
-        <title>WEB1 - ${title}</title>
-        <meta charset="utf-8">
-        </head>
-        <body>
-        <h1><a href="/">WEB</a></h1>
-        ${list}  
-        ${control}                
-        ${body}
-        </body>
-        </html>
-    `;
-}
-
-function templateList(filelist) { 
-    var list = '<ul>';
-    var i = 0;
-    while(i < filelist.length){
-        list = list + `<li><a href="?id=${filelist[i]}">${filelist[i]}</a></li>`;
-        i = i + 1 ;
-    }
-    list = list + '</ul>';
-    return list;
-}
+const template = require('./lib/template.js');
+const path = require('path');
+const sanitizeHtml = require('sanitize-html');
 
 const app = http.createServer((req, res) => {
     var _url = req.url;
@@ -41,29 +15,39 @@ const app = http.createServer((req, res) => {
             fs.readdir('./data', (err, filelist) => {
                 var title = 'Welcome';
                 var description = 'Hello, Node.js';    
-                var list = templateList(filelist);
-                var template = templateHTML(title, list, `<h2>${title}</h2>${description}`, 
+                var list = template.list(filelist);
+                var html = template.html(title, list, `<h2>${title}</h2>${description}`, 
                     `<a href="/create">create</a>`);
                 res.writeHead(200);
-                res.end(template);
+                res.end(html);
             });
         } else {
             fs.readdir('./data', (err, filelist) => {
-                fs.readFile(`data/${queryData.id}`, 'utf8', (err, description) => {
+                var filteredId = path.parse(queryData.id).base;
+                fs.readFile(`data/${filteredId}`, 'utf8', (err, description) => {
                     var title = queryData.id;
-                    var list = templateList(filelist);
-                    var template = templateHTML(title, list, `<h2>${title}</h2>${description}`,
-                        `<a href="/create">create</a> <a href="/update?id=${title}">update</a>`);
+                    var sanitizedTitle = sanitizeHtml(title);
+                    var sanitizedDescription = sanitizeHtml(description, {
+                        allowedTags:['h1'], // h1 태그를 쓰면 허용 하겠다.
+                    });
+                    var list = template.list(filelist);
+                    var html = template.html(sanitizedTitle, list, `<h2>${sanitizedTitle}</h2>${sanitizedDescription}`,
+                        `<a href="/create">create</a>
+                         <a href="/update?id=${sanitizedTitle}">update</a>
+                         <form action="delete_process" method="post" onsubmit="confirm('really?')">
+                            <input type="hidden" name="id" value="${sanitizedTitle}">
+                            <input type="submit" value="delete">
+                         </form>`);
                     res.writeHead(200);
-                    res.end(template);
+                    res.end(html);
                 });                
             });
         }        
     } else if(pathname === '/create') {
         fs.readdir('./data', (err, filelist) => {
             var title = 'WEB - create';
-            var list = templateList(filelist);
-            var template = templateHTML(title, list, `
+            var list = template.list(filelist);
+            var html = template.html(title, list, `
             <form action="/create_process" method="post"> 
                 <p><input type='text' name="title" placeholder="title"></p>
                 <p>
@@ -74,7 +58,7 @@ const app = http.createServer((req, res) => {
                 </p>
             </form>`, '');
             res.writeHead(200);
-            res.end(template);
+            res.end(html);
         });
     } else if (pathname === '/create_process') {
         var body = '';
@@ -94,8 +78,8 @@ const app = http.createServer((req, res) => {
         fs.readdir('./data', (err, filelist) => {
             fs.readFile(`data/${queryData.id}`, 'utf8', (err, description) => {
                 var title = queryData.id;
-                var list = templateList(filelist);
-                var template = templateHTML(title, list, 
+                var list = template.list(filelist);
+                var html = template.html(title, list, 
                 `<form action="/update_process" method="post"> 
                     <input type='hidden' name="id" value="${title}">
                     <p><input type='text' name="title" placeholder="title" value="${title}"></p>
@@ -108,7 +92,7 @@ const app = http.createServer((req, res) => {
                 </form>`,
                 `<a href="/create">create</a> <a href="/update?id=${title}">update</a>`);
                 res.writeHead(200);
-                res.end(template);
+                res.end(html);
             });                
         });
     } else if (pathname === '/update_process') {
@@ -126,6 +110,19 @@ const app = http.createServer((req, res) => {
                     res.writeHead(302, {Location: `/?id=${title}`}); //200은 성공, 302는 페이지를 다른데로 리다이렉트 시켜라
                     res.end();
                 });
+            });
+        });
+    } else if (pathname === '/delete_process') {
+        var body = '';
+        req.on('data', (data) => { //웹브라우저에서 post 방식으로 data가 조각조각 들어올 때 처리
+            body = body + data;
+        }); 
+        req.on('end', () => {
+            var post = qs.parse(body);
+            var id = post.id;
+            fs.unlink(`data/${id}`, (error) => {
+                res.writeHead(302, {Location: `/`});
+                res.end();
             });
         });
     } else {
